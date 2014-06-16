@@ -8,6 +8,7 @@
 #include <map>
 #include <unordered_set>
 #include <string>
+#include <queue>
 
 #include "common.h"
 
@@ -28,6 +29,13 @@ struct expando arg_list = {0};
 
 std::map<std::string, std::unordered_set<std::string>> path_map;
 
+struct parse_entry {
+    CXTranslationUnit tu;
+    const char *fname;
+}; 
+
+std::queue<struct parse_entry *> parse_queue;
+
 static void grow(struct expando *e)
 {
     if (e->alloced)
@@ -44,7 +52,6 @@ static void push(struct expando *e, const char *arg)
 	grow(e);
     e->args[e->used++] = arg;
 }
-
 
 static void push_path(const char *f)
 {
@@ -78,9 +85,6 @@ static const char *resolve_name(const char *name)
 }
 
 
-
-static void dump_includes(CXTranslationUnit tu, const char *fname);
-
 static enum CXVisitorResult include_visit(void *context, CXCursor cursor, CXSourceRange range) {
   struct my_context *ctx = (struct my_context *)context;
   CXTranslationUnit tu = clang_Cursor_getTranslationUnit(cursor);
@@ -90,9 +94,14 @@ static enum CXVisitorResult include_visit(void *context, CXCursor cursor, CXSour
   const char *s = clang_getCString(filename);
 
   if (s) {
-    const char *y = resolve_name(s);
+      struct parse_entry *p = new parse_entry;
+      const char *y = resolve_name(s);
+
       path_map[ctx->fname].insert(y);
-      dump_includes(tu, s);
+
+      p->fname = s;
+      p->tu = tu;
+      parse_queue.push(p);
   }
 
   clang_disposeString(filename);
@@ -112,6 +121,9 @@ static void dump_includes(CXTranslationUnit tu, const char *fname)
 	    .context = &ctx,
 	    .visit = include_visit
 	};
+	if (path_map.count(rs)) {
+	    return;
+	}
 	CXFile file = clang_getFile(tu, rs);
 	clang_findIncludesInFile(tu, file, visitor);
     }
@@ -123,6 +135,12 @@ static void parse(struct expando *e, const char *fname)
     CXTranslationUnit tu = clang_parseTranslationUnit(index, fname, e->args, e->used, NULL, 0, CXTranslationUnit_DetailedPreprocessingRecord);
 
     dump_includes(tu, fname);
+
+    while (!parse_queue.empty()) {
+	struct parse_entry *p = parse_queue.front();
+	dump_includes(p->tu, p->fname);
+	parse_queue.pop();
+    }
 
     clang_disposeTranslationUnit(tu);
 }
