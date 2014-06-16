@@ -30,7 +30,7 @@ static CXIndex clang_index;
 static struct expando path_list = {0};
 static struct expando arg_list = {0};
 
-static std::map<std::string, std::unordered_set<std::string>> path_map;
+static std::unordered_set<std::string> path_seen;
 
 struct parse_entry {
     CXTranslationUnit tu;
@@ -38,6 +38,8 @@ struct parse_entry {
 }; 
 
 static std::queue<struct parse_entry *> parse_queue;
+
+static ostream *output;
 
 static void grow(struct expando *e)
 {
@@ -100,7 +102,9 @@ static enum CXVisitorResult include_visit(void *context, CXCursor cursor, CXSour
       struct parse_entry *p = new parse_entry;
       const char *y = resolve_name(s);
 
-      path_map[ctx->fname].insert(y);
+      *output << "\"" << ctx->fname << "\"->\"" << y << "\";\n";
+
+      free((void *)y);
 
       p->fname = s;
       p->tu = tu;
@@ -124,9 +128,10 @@ static void dump_includes(CXTranslationUnit tu, const char *fname)
 	    .context = &ctx,
 	    .visit = include_visit
 	};
-	if (path_map.count(rs)) {
+	if (path_seen.count(rs)) {
 	    return;
 	}
+	path_seen.insert(rs);
 	CXFile file = clang_getFile(tu, rs);
 	clang_findIncludesInFile(tu, file, visitor);
     }
@@ -185,32 +190,6 @@ static ostream *open_output(const char *output_file)
     }
 }
 
-static void dump_map(const char *output_file)
-{
-    ostream *output = open_output(output_file);
-
-    std::map<std::string, std::unordered_set<std::string>>::iterator it;
-
-    *output << "digraph includes {" << "\n";
-
-    for (it = path_map.begin(); it!=path_map.end(); ++it) {
-
-	std::unordered_set<std::string>::iterator bt;
-
-	for (bt = it->second.begin(); bt != it->second.end(); ++bt) {
-	    *output << "\"" << it->first << "\"" << "->";
-	    *output << "\"" << *bt << "\"" << ";\n";
-	}
-    }
-
-    *output << "}" << "\n";
-
-    if (output_file) {
-	((ofstream *)output)->close();
-	delete output;
-    }
-}
-
 static void usage(const char *prog)
 {
     fprintf(stderr, "Usage: %s [-I<include> ...] <file> ...\n", prog);
@@ -241,6 +220,10 @@ int main(int argc, char *argv[])
     argc -= optind;
     argv += optind;
 
+    output = open_output(output_file);
+
+    *output << "digraph includes {" << "\n";
+
     while (argc) {
 	if (is_dir(*argv)) {
 	    printf("recurse %s\r\n", *argv);
@@ -252,6 +235,13 @@ int main(int argc, char *argv[])
 	--argc;
 	++argv;
     }
-    dump_map(output_file);
+
+    *output << "}" << "\n";
+
+    if (output_file) {
+	((ofstream *)output)->close();
+	delete output;
+    }
+
     return 0;
 }
