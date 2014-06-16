@@ -2,6 +2,7 @@
 #include <unistd.h>
 #include <stdlib.h>
 #include <string.h>
+#include <ftw.h>
 
 #include <iostream>
 #include <fstream>
@@ -24,17 +25,19 @@ struct expando {
     size_t alloced;
 };
 
-struct expando path_list = {0};
-struct expando arg_list = {0};
+static CXIndex clang_index;
 
-std::map<std::string, std::unordered_set<std::string>> path_map;
+static struct expando path_list = {0};
+static struct expando arg_list = {0};
+
+static std::map<std::string, std::unordered_set<std::string>> path_map;
 
 struct parse_entry {
     CXTranslationUnit tu;
     const char *fname;
 }; 
 
-std::queue<struct parse_entry *> parse_queue;
+static std::queue<struct parse_entry *> parse_queue;
 
 static void grow(struct expando *e)
 {
@@ -129,11 +132,14 @@ static void dump_includes(CXTranslationUnit tu, const char *fname)
     }
 }
 
+
+
+
+
+
 static void parse(struct expando *e, const char *fname)
 {
-    CXIndex index = clang_createIndex(0, 0);
-    CXTranslationUnit tu = clang_parseTranslationUnit(index, fname, e->args, e->used, NULL, 0, CXTranslationUnit_DetailedPreprocessingRecord);
-
+    CXTranslationUnit tu = clang_parseTranslationUnit(clang_index, fname, e->args, e->used, NULL, 0, CXTranslationUnit_DetailedPreprocessingRecord);
     dump_includes(tu, fname);
 
     while (!parse_queue.empty()) {
@@ -144,6 +150,28 @@ static void parse(struct expando *e, const char *fname)
 
     clang_disposeTranslationUnit(tu);
 }
+
+static int dir_callback(const char *fpath, const struct stat *sb, int typeflag)
+{
+    if (S_ISREG(sb->st_mode))
+	parse(&arg_list, fpath);
+    return 0;
+}
+
+static bool is_dir(const char *path)
+{
+    struct stat st;
+
+    if (stat(path, &st) < 0) {
+	fprintf(stderr, "stat %s: %s\n", path, strerror(errno));
+	exit(1);
+    }
+    return S_ISDIR(st.st_mode);
+}
+
+
+
+
 
 static ostream *open_output(const char *output_file)
 {
@@ -195,6 +223,8 @@ int main(int argc, char *argv[])
     char *output_file = NULL;
     int ch;
 
+    clang_index = clang_createIndex(0, 0);
+
     while ((ch = getopt(argc, argv, "I:o:")) != -1) {
 	switch (ch) {
 	    case 'o':
@@ -212,8 +242,13 @@ int main(int argc, char *argv[])
     argv += optind;
 
     while (argc) {
-	printf("parse %s\r\n", *argv);
-	parse(&arg_list, *argv);
+	if (is_dir(*argv)) {
+	    printf("recurse %s\r\n", *argv);
+	    ftw(*argv, dir_callback, 100);
+	} else {
+	    printf("parse %s\r\n", *argv);
+	    parse(&arg_list, *argv);
+	}
 	--argc;
 	++argv;
     }
