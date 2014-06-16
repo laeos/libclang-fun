@@ -24,6 +24,7 @@ struct expando {
 };
 
 struct expando path_list = {0};
+struct expando arg_list = {0};
 
 std::map<std::string, std::unordered_set<std::string>> path_map;
 
@@ -37,12 +38,23 @@ static void grow(struct expando *e)
     e->args = (const char **)realloc(e->args, sizeof(char *) * e->alloced);
 }
 
-static void push(struct expando *e, const char *f)
+static void push(struct expando *e, const char *arg)
 {
     if (e->used >= e->alloced)
 	grow(e);
+    e->args[e->used++] = arg;
+}
 
-    e->args[e->used++] = realpath(f, NULL);
+
+static void push_path(const char *f)
+{
+    char *path = realpath(f, NULL);
+    char buffer[1024];
+
+    push(&path_list, f);
+
+    snprintf(buffer, sizeof(buffer), "-I%s", path);
+    push(&arg_list, strdup(buffer));
 }
 
 static const char *resolve_name(const char *name)
@@ -171,7 +183,7 @@ int main(int argc, char *argv[])
 		output_file = strdup(optarg);
 		break;
 	    case 'I':
-		push(&path_list, optarg);
+		push_path(optarg);
 		break;
 	    case '?':
 	    default:
@@ -183,7 +195,7 @@ int main(int argc, char *argv[])
 
     while (argc) {
 	printf("parse %s\r\n", *argv);
-	parse(&path_list, *argv);
+	parse(&arg_list, *argv);
 	--argc;
 	++argv;
     }
